@@ -11,9 +11,11 @@
 extern crate mdbook;
 #[macro_use]
 extern crate clap;
+extern crate open;
 
 use std::env;
 use std::error::Error;
+use std::ffi::OsStr;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -53,37 +55,40 @@ fn main() {
 
 // Build command implementation
 fn build(args: &ArgMatches) -> Result<(), Box<Error>> {
-    let book = build_mdbook_struct(args);
+    let book_dir = get_book_dir(args);
+    let book = MDBook::new(&book_dir).read_config()?;
 
     let mut book = match args.value_of("dest-dir") {
-        Some(dest_dir) => book.set_dest(Path::new(dest_dir)),
-        None => book
+        Some(dest_dir) => book.with_destination(dest_dir),
+        None => book,
     };
 
-    try!(book.build());
+    if args.is_present("no-create") {
+        book.create_missing = false;
+    }
+
+    if args.is_present("curly-quotes") {
+        book = book.with_curly_quotes(true);
+    }
+
+    book.build()?;
+
+    if args.is_present("open") {
+        open(book.get_destination().join("index.html"));
+    }
 
     Ok(())
 }
 
+// test command implementation
 fn test(args: &ArgMatches) -> Result<(), Box<Error>> {
-    let mut book = build_mdbook_struct(args);
+    let library_paths: Vec<&str> = args.values_of("library-path").map(|v| v.collect()).unwrap_or_default();
+    let book_dir = get_book_dir(args);
+    let mut book = MDBook::new(&book_dir).read_config()?;
 
-    try!(book.test());
+    book.test(library_paths)?;
 
     Ok(())
-}
-
-fn build_mdbook_struct(args: &ArgMatches) -> mdbook::MDBook {
-    let book_dir = get_book_dir(args);
-    let mut book = MDBook::new(&book_dir).read_config();
-
-    // By default mdbook will attempt to create non-existent files referenced
-    // from SUMMARY.md files. This is problematic on CI where we mount the
-    // source directory as readonly. To avoid any issues, we'll disabled
-    // mdbook's implicit file creation feature.
-    book.create_missing = false;
-
-    book
 }
 
 fn get_book_dir(args: &ArgMatches) -> PathBuf {
@@ -97,5 +102,11 @@ fn get_book_dir(args: &ArgMatches) -> PathBuf {
         }
     } else {
         env::current_dir().unwrap()
+    }
+}
+
+fn open<P: AsRef<OsStr>>(path: P) {
+    if let Err(e) = open::that(path) {
+        println!("Error opening web browser: {}", e);
     }
 }
